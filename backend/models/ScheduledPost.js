@@ -8,6 +8,12 @@ const scheduledPostSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  clientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    default: null,
+    index: true
+  },
   
   // Post content
   caption: {
@@ -80,6 +86,7 @@ const scheduledPostSchema = new mongoose.Schema({
 // Indexes
 scheduledPostSchema.index({ userId: 1, scheduledFor: 1 });
 scheduledPostSchema.index({ userId: 1, status: 1 });
+scheduledPostSchema.index({ userId: 1, clientId: 1, scheduledFor: 1 });
 
 // Update timestamp
 scheduledPostSchema.pre('save', function(next) {

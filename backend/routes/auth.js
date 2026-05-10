@@ -172,11 +172,28 @@ router.post('/instagram/connect', authMiddleware, async (req, res) => {
  * Redirect to Instagram OAuth (using Instagram API with Instagram Login)
  */
 router.get('/instagram/login', (req, res) => {
+  const { token } = req.query;
+  if (!token) {
+    return res.status(401).send('Login required before connecting Instagram');
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (_error) {
+    return res.status(401).send('Invalid or expired login token');
+  }
+
   const redirectUri = `${process.env.NGROK_URL || 'http://localhost:5000'}/api/auth/instagram/callback`;
   const scope = 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights';
   const appId = process.env.INSTAGRAM_APP_ID;
+  const state = jwt.sign(
+    { userId: decoded.userId, purpose: 'instagram_oauth' },
+    process.env.JWT_SECRET,
+    { expiresIn: '10m' }
+  );
 
-  const igAuthUrl = `https://www.instagram.com/oauth/authorize?force_reauth=true&client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
+  const igAuthUrl = `https://www.instagram.com/oauth/authorize?force_reauth=true&client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(state)}`;
 
   res.redirect(igAuthUrl);
 });
@@ -187,7 +204,7 @@ router.get('/instagram/login', (req, res) => {
  */
 router.get('/instagram/callback', async (req, res) => {
   try {
-    const { code, error: authError } = req.query;
+    const { code, state, error: authError } = req.query;
 
     if (authError) {
       return res.status(400).send(`<h2>Authorization denied</h2><p>${authError}</p>`);
@@ -195,6 +212,21 @@ router.get('/instagram/callback', async (req, res) => {
 
     if (!code) {
       return res.status(400).send('No authorization code received');
+    }
+
+    if (!state) {
+      return res.status(400).send('Missing OAuth state');
+    }
+
+    let oauthState;
+    try {
+      oauthState = jwt.verify(state, process.env.JWT_SECRET);
+    } catch (_error) {
+      return res.status(401).send('Invalid or expired OAuth state');
+    }
+
+    if (oauthState.purpose !== 'instagram_oauth' || !oauthState.userId) {
+      return res.status(401).send('Invalid OAuth state');
     }
 
     const axios = require('axios');
@@ -242,24 +274,28 @@ router.get('/instagram/callback', async (req, res) => {
     const igAccountId = userInfoResponse.data.user_id || igUserId;
     console.log('Instagram account:', igUsername, 'ID:', igAccountId);
 
-    // Step 4: Save to the test user
-    const user = await User.findOne({ email: 'test@test.com' });
-    if (user) {
-      user.instagramBusinessAccountId = igAccountId.toString();
-      user.instagramUsername = igUsername;
-      user.instagramAccessToken = longLivedToken;
-      user.instagramTokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
-      user.facebookPageId = process.env.FACEBOOK_PAGE_ID || '61587708387604';
-      await user.save();
-      console.log('User updated with Instagram token!');
+    // Step 4: Save to the user who started OAuth
+    const user = await User.findById(oauthState.userId);
+    if (!user) {
+      return res.status(404).send('Threadline user not found');
     }
+
+    user.instagramBusinessAccountId = igAccountId.toString();
+    user.instagramUsername = igUsername;
+    user.instagramAccessToken = longLivedToken;
+    user.instagramTokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    user.facebookPageId = process.env.FACEBOOK_PAGE_ID || user.facebookPageId;
+    await user.save();
+    console.log('User updated with Instagram token:', user._id.toString());
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
 
     res.send(
       '<h2>Instagram Connected Successfully!</h2>' +
       '<p><strong>Instagram Account:</strong> @' + igUsername + '</p>' +
       '<p><strong>Instagram ID:</strong> ' + igAccountId + '</p>' +
       '<p><strong>Account Type:</strong> ' + userInfoResponse.data.account_type + '</p>' +
-      '<p>Token saved! You can close this window and go back to <a href="http://localhost:5173">Threadline CRM</a>.</p>'
+      '<p>Token saved! You can close this window and go back to <a href="' + clientUrl + '">Threadline CRM</a>.</p>'
     );
 
   } catch (error) {
@@ -287,6 +323,10 @@ router.get('/me', authMiddleware, async (req, res) => {
  * Debug: Check what permissions the Instagram token has
  */
 router.get('/debug-token', authMiddleware, async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Route not found' });
+  }
+
   try {
     const user = req.user;
     const axios = require('axios');

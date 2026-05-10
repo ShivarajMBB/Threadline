@@ -51,9 +51,12 @@ router.get('/stats/overview', authMiddleware, async (req, res) => {
  */
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { funnelState, search } = req.query;
+    const { funnelState, search, clientId } = req.query;
     
     const query = { userId: req.user._id };
+    if (clientId && clientId !== 'all') {
+      query.clientId = clientId === 'unassigned' ? null : clientId;
+    }
     
     if (funnelState) {
       query.funnelState = funnelState;
@@ -70,7 +73,8 @@ router.get('/', authMiddleware, async (req, res) => {
     
     const leads = await Lead.find(query)
       .sort({ createdAt: -1 })
-      .populate('salesPageId');
+      .populate('salesPageId')
+      .populate('clientId', 'name industry status');
     
     res.json({ leads });
   } catch (error) {
@@ -88,7 +92,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const lead = await Lead.findOne({
       _id: req.params.id,
       userId: req.user._id
-    }).populate('salesPageId');
+    }).populate('salesPageId').populate('clientId', 'name industry status');
     
     if (!lead) {
       return res.status(404).json({ error: 'Lead not found' });
@@ -107,7 +111,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
  */
 router.patch('/:id', authMiddleware, async (req, res) => {
   try {
-    const { funnelState, notes, name, email, phone, estimatedValue, revenue } = req.body;
+    const { funnelState, notes, name, email, phone, estimatedValue, revenue, clientId } = req.body;
     
     const lead = await Lead.findOne({
       _id: req.params.id,
@@ -126,6 +130,7 @@ router.patch('/:id', authMiddleware, async (req, res) => {
     if (phone !== undefined) lead.phone = phone;
     if (estimatedValue !== undefined) lead.estimatedValue = estimatedValue;
     if (revenue !== undefined) lead.revenue = revenue;
+    if (clientId !== undefined) lead.clientId = clientId || null;
     
     // Track when business last replied/updated
     if (funnelState === 'replied' || funnelState === 'interested') {

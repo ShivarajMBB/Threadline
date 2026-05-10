@@ -87,10 +87,16 @@ router.get('/conversations', authMiddleware, async (req, res) => {
       }
     }
 
+    const query = { userId: req.user._id };
+    const { clientId } = req.query;
+    if (clientId && clientId !== 'all') {
+      query.clientId = clientId === 'unassigned' ? null : clientId;
+    }
+
     // ALWAYS return conversations from DB (includes webhook-received data)
-    const conversations = await Conversation.find({
-      userId: req.user._id
-    }).sort({ lastMessageAt: -1 });
+    const conversations = await Conversation.find(query)
+      .sort({ lastMessageAt: -1 })
+      .populate('clientId', 'name industry status');
 
     res.json({ conversations });
   } catch (error) {
@@ -113,9 +119,11 @@ router.post('/send', authMiddleware, async (req, res) => {
       });
     }
 
-    if (typeof message !== 'string' || message.length > 1000) {
+    const trimmedMessage = typeof message === 'string' ? message.trim() : '';
+
+    if (!trimmedMessage || trimmedMessage.length > 1000) {
       return res.status(400).json({
-        error: 'Message must be a string and under 1000 characters'
+        error: 'Message must be a non-empty string under 1000 characters'
       });
     }
     
@@ -131,7 +139,7 @@ router.post('/send', authMiddleware, async (req, res) => {
     // Send via Instagram API
     const result = await InstagramAPI.sendMessage(
       conversation.instagramUserId,
-      message,
+      trimmedMessage,
       req.user.instagramAccessToken
     );
     
@@ -142,7 +150,7 @@ router.post('/send', authMiddleware, async (req, res) => {
         id: req.user.instagramBusinessAccountId,
         username: req.user.instagramUsername
       },
-      message: message,
+      message: trimmedMessage,
       timestamp: new Date(),
       isFromBusiness: true
     });
@@ -180,7 +188,7 @@ router.get('/conversation/:id', authMiddleware, async (req, res) => {
     const conversation = await Conversation.findOne({
       _id: req.params.id,
       userId: req.user._id
-    }).populate('leadId');
+    }).populate('leadId').populate('clientId', 'name industry status');
     
     if (!conversation) {
       return res.status(404).json({ error: 'Conversation not found' });

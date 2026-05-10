@@ -5,4 +5,8 @@ export { salesPagesAPI } from './salesPages';
 export { schedulerAPI } from './scheduler';
 export { settingsAPI } from './settings';
 export { audienceInsightsAPI } from './audienceInsights';
+export { socialAnalyzerAPI } from './socialAnalyzer';
+export { clientsAPI } from './clients';
+export { contentPlannerAPI } from './contentPlanner';
+export { reportsAPI } from './reports';
 export { default as api } from './config';

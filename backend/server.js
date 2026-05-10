@@ -24,8 +24,23 @@ mongoose.connection.on('disconnected', () => { dbConnected = false; });
 
 // Middleware
 app.use(helmet()); // Security headers
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001'
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked origin: ${origin}`));
+  },
   credentials: true
 }));
 
@@ -60,6 +75,10 @@ const salesPagesRoutes = require('./routes/salesPages');
 const schedulerRoutes = require('./routes/scheduler');
 const settingsRoutes = require('./routes/settings');
 const audienceInsightsRoutes = require('./routes/audienceInsights');
+const socialAnalyzerRoutes = require('./routes/socialAnalyzer');
+const clientsRoutes = require('./routes/clients');
+const contentPlannerRoutes = require('./routes/contentPlanner');
+const reportsRoutes = require('./routes/reports');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -69,6 +88,10 @@ app.use('/api/sales-pages', salesPagesRoutes);
 app.use('/api/scheduler', schedulerRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/audience-insights', audienceInsightsRoutes);
+app.use('/api/social-analyzer', socialAnalyzerRoutes);
+app.use('/api/clients', clientsRoutes);
+app.use('/api/content-planner', contentPlannerRoutes);
+app.use('/api/reports', reportsRoutes);
 
 // Health check endpoint — actually checks DB status
 app.get('/health', (req, res) => {
@@ -147,10 +170,13 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
+const { startBackgroundJobs } = require('./services/backgroundJobs');
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔑 API available at http://localhost:${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  startBackgroundJobs();
 });
 
 module.exports = app;

@@ -62,7 +62,7 @@ router.post('/', async (req, res) => {
       for (const entry of body.entry) {
         if (entry.changes) {
           for (const change of entry.changes) {
-            await processWebhookChange(change);
+            await processWebhookChange(change, entry.id);
           }
         }
         
@@ -86,16 +86,16 @@ router.post('/', async (req, res) => {
 /**
  * Process webhook change event
  */
-async function processWebhookChange(change) {
+async function processWebhookChange(change, entryId) {
   try {
     const { field, value } = change;
 
     console.log('Webhook change:', field);
 
     if (field === 'comments') {
-      await handleCommentEvent(value);
+      await handleCommentEvent(value, entryId);
     } else if (field === 'mentions') {
-      await handleMentionEvent(value);
+      await handleMentionEvent(value, entryId);
     } else if (field === 'messages') {
       // Messages can come via changes (not just entry.messaging)
       console.log('📨 Message via changes:', JSON.stringify(value, null, 2));
@@ -113,6 +113,21 @@ async function processWebhookChange(change) {
   } catch (error) {
     console.error('Process change error:', error);
   }
+}
+
+async function findConnectedUserByInstagramId(instagramAccountId) {
+  if (!instagramAccountId) return null;
+
+  const user = await User.findOne({
+    instagramBusinessAccountId: instagramAccountId.toString(),
+    instagramAccessToken: { $ne: null }
+  });
+
+  if (!user) {
+    console.log('No connected user found for Instagram account:', instagramAccountId);
+  }
+
+  return user;
 }
 
 /**
@@ -163,22 +178,9 @@ async function processMessagingEvent(event) {
       eventTimestamp = new Date();
     }
 
-    // Find user by Instagram Business Account ID
-    let user = await User.findOne({
-      instagramBusinessAccountId: recipientId
-    });
-
-    // Fallback: if recipient ID doesn't match (e.g. Meta test button sends fake IDs),
-    // try to find any user with Instagram connected
-    if (!user) {
-      console.log('User not found for IG account:', recipientId, '— trying fallback lookup');
-      user = await User.findOne({
-        instagramAccessToken: { $ne: null }
-      });
-    }
+    const user = await findConnectedUserByInstagramId(recipientId);
 
     if (!user) {
-      console.log('No Instagram-connected user found at all');
       return;
     }
     
@@ -281,13 +283,10 @@ async function handleMessageEditEvent(event) {
     const mid = event.message_edit?.mid;
     if (!mid) return;
 
-    // Find any user with Instagram connected
-    const user = await User.findOne({
-      instagramAccessToken: { $ne: null }
-    });
+    const user = await findConnectedUserByInstagramId(event.recipient?.id);
 
     if (!user) {
-      console.log('No user with Instagram token found');
+      console.log('Skipping message_edit because the recipient is not connected');
       return;
     }
 
@@ -534,11 +533,11 @@ async function saveMessageToConversation(user, msgData) {
  * Handle comment event
  * Creates a conversation/lead when someone comments on your posts
  */
-async function handleCommentEvent(value) {
+async function handleCommentEvent(value, entryId) {
   try {
     console.log('💬 Comment event:', JSON.stringify(value, null, 2));
 
-    const user = await User.findOne({ instagramAccessToken: { $ne: null } });
+    const user = await findConnectedUserByInstagramId(value.recipient?.id || value.to?.id || entryId);
     if (!user) return;
 
     const commentId = value.id;
@@ -681,11 +680,11 @@ async function handleCommentEvent(value) {
  * Handle mention event
  * Creates a conversation/lead when someone mentions your account
  */
-async function handleMentionEvent(value) {
+async function handleMentionEvent(value, entryId) {
   try {
     console.log('📢 Mention event:', JSON.stringify(value, null, 2));
 
-    const user = await User.findOne({ instagramAccessToken: { $ne: null } });
+    const user = await findConnectedUserByInstagramId(value.recipient?.id || value.to?.id || entryId);
     if (!user) return;
 
     const mentionerId = value.from?.id;
@@ -709,7 +708,7 @@ async function handleMentionEvent(value) {
         userId: user._id,
         instagramUserId: mentionerId,
         username: mentionerUsername,
-        source: 'mention',
+        source: 'story_mention',
         sourcePostId: mediaId || null,
         messages: [],
         unread: true
@@ -739,7 +738,7 @@ async function handleMentionEvent(value) {
           userId: user._id,
           instagramUserId: mentionerId,
           username: mentionerUsername,
-          source: 'mention',
+          source: 'story_mention',
           funnelState: 'new'
         });
         await lead.save();

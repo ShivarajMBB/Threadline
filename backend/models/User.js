@@ -41,6 +41,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  lastInstagramMediaSyncAt: {
+    type: Date,
+    default: null
+  },
   
   // Settings
   acknowledgmentEnabled: {

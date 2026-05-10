@@ -8,6 +8,12 @@ const leadSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  clientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    default: null,
+    index: true
+  },
   
   // Customer info
   instagramUserId: {
@@ -99,6 +105,7 @@ const leadSchema = new mongoose.Schema({
 
 // Indexes
 leadSchema.index({ userId: 1, funnelState: 1 });
+leadSchema.index({ userId: 1, clientId: 1, createdAt: -1 });
 leadSchema.index({ userId: 1, createdAt: -1 });
 
 // Update timestamp

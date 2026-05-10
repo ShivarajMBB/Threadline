@@ -1,8 +1,8 @@
 import api from './config';
 
 export const messagesAPI = {
-  async getConversations() {
-    const response = await api.get('/messages/conversations');
+  async getConversations(params = {}) {
+    const response = await api.get('/messages/conversations', { params });
     return response.data.conversations;
   },
 

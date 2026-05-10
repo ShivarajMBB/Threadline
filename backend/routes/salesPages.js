@@ -9,8 +9,15 @@ const authMiddleware = require('../middleware/auth');
  */
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const salesPages = await SalesPage.find({ userId: req.user._id })
-      .sort({ createdAt: -1 });
+    const query = { userId: req.user._id };
+    const { clientId } = req.query;
+    if (clientId && clientId !== 'all') {
+      query.clientId = clientId === 'unassigned' ? null : clientId;
+    }
+
+    const salesPages = await SalesPage.find(query)
+      .sort({ createdAt: -1 })
+      .populate('clientId', 'name industry status');
     
     res.json({ salesPages });
   } catch (error) {
@@ -24,7 +31,7 @@ router.get('/', authMiddleware, async (req, res) => {
  */
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, currency, imageUrl } = req.body;
+    const { title, description, price, currency, imageUrl, clientId } = req.body;
     
     if (!title || !description || !price) {
       return res.status(400).json({ 
@@ -46,6 +53,7 @@ router.post('/', authMiddleware, async (req, res) => {
       userId: req.user._id,
       title,
       description,
+      clientId: clientId || null,
       slug,
       price,
       currency: currency || 'USD',
@@ -91,7 +99,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
  */
 router.patch('/:id', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, currency, imageUrl, active } = req.body;
+    const { title, description, price, currency, imageUrl, active, clientId } = req.body;
     
     const salesPage = await SalesPage.findOne({
       _id: req.params.id,
@@ -108,6 +116,7 @@ router.patch('/:id', authMiddleware, async (req, res) => {
     if (currency) salesPage.currency = currency;
     if (imageUrl !== undefined) salesPage.imageUrl = imageUrl;
     if (active !== undefined) salesPage.active = active;
+    if (clientId !== undefined) salesPage.clientId = clientId || null;
     
     await salesPage.save();
     

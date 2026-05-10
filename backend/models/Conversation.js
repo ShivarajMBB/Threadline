@@ -22,6 +22,12 @@ const conversationSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  clientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    default: null,
+    index: true
+  },
   
   // Instagram user info
   instagramUserId: {
@@ -82,6 +88,7 @@ const conversationSchema = new mongoose.Schema({
 // Indexes for performance
 conversationSchema.index({ userId: 1, lastMessageAt: -1 });
 conversationSchema.index({ userId: 1, unread: 1 });
+conversationSchema.index({ userId: 1, clientId: 1, lastMessageAt: -1 });
 
 // Update timestamp
 conversationSchema.pre('save', function(next) {

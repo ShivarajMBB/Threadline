@@ -6,7 +6,11 @@ import {
   salesPagesAPI,
   schedulerAPI,
   settingsAPI,
-  audienceInsightsAPI
+  audienceInsightsAPI,
+  socialAnalyzerAPI,
+  clientsAPI,
+  contentPlannerAPI,
+  reportsAPI
 } from './api';
 import { 
   Send, Settings, MessageSquare, ArrowLeft, Users, DollarSign, 
@@ -205,12 +209,16 @@ export default function ThreadlineCRM() {
   const [currentView, setCurrentView] = useState('inbox');
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [selectedLead, setSelectedLead] = useState(null);
+  const [selectedClientId, setSelectedClientId] = useState('all');
   
   // Data State - from API
   const [conversations, setConversations] = useState([]);
   const [leads, setLeads] = useState([]);
   const [salesPages, setSalesPages] = useState([]);
   const [scheduledPosts, setScheduledPosts] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [contentItems, setContentItems] = useState([]);
+  const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
   
   // UI State
@@ -222,10 +230,39 @@ export default function ThreadlineCRM() {
 
   // Modal / Form State
   const [showSchedulerForm, setShowSchedulerForm] = useState(false);
-  const [schedulerForm, setSchedulerForm] = useState({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '' });
+  const [schedulerForm, setSchedulerForm] = useState({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '', clientId: '' });
   const [showSalesPageForm, setShowSalesPageForm] = useState(false);
-  const [salesPageForm, setSalesPageForm] = useState({ title: '', description: '', price: '', imageUrl: '' });
+  const [salesPageForm, setSalesPageForm] = useState({ title: '', description: '', price: '', imageUrl: '', clientId: '' });
   const [editingSalesPage, setEditingSalesPage] = useState(null);
+  const [showClientForm, setShowClientForm] = useState(false);
+  const [editingClient, setEditingClient] = useState(null);
+  const [clientForm, setClientForm] = useState({
+    name: '',
+    industry: '',
+    website: '',
+    instagramHandle: '',
+    youtubeChannel: '',
+    contactName: '',
+    contactEmail: '',
+    notes: '',
+    status: 'active'
+  });
+  const [showContentForm, setShowContentForm] = useState(false);
+  const [editingContentItem, setEditingContentItem] = useState(null);
+  const [contentFilter, setContentFilter] = useState('all');
+  const [contentForm, setContentForm] = useState({
+    clientId: '',
+    title: '',
+    platform: 'instagram',
+    contentType: 'post',
+    caption: '',
+    hashtags: '',
+    dueDate: '',
+    status: 'idea',
+    approvalStatus: 'internal',
+    assetUrl: '',
+    notes: ''
+  });
   const [formLoading, setFormLoading] = useState(false);
 
   // Audience Insights State
@@ -233,6 +270,12 @@ export default function ThreadlineCRM() {
   const [audienceInsightsLoading, setAudienceInsightsLoading] = useState(false);
   const [audienceInsightsError, setAudienceInsightsError] = useState(null);
   const [audienceMetricType, setAudienceMetricType] = useState('follower_demographics');
+  const [socialAnalysis, setSocialAnalysis] = useState(null);
+  const [socialAnalysisLoading, setSocialAnalysisLoading] = useState(false);
+  const [socialAnalysisError, setSocialAnalysisError] = useState(null);
+  const [socialSyncLoading, setSocialSyncLoading] = useState(false);
+  const [weeklyReport, setWeeklyReport] = useState(null);
+  const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
 
   // Comment-to-DM Automation State
   const [commentAutomations, setCommentAutomations] = useState([]);
@@ -268,12 +311,24 @@ export default function ThreadlineCRM() {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (user) {
+      loadScopedData();
+    }
+  }, [selectedClientId]);
+
   // Load audience insights only when navigating to that page
   useEffect(() => {
     if (currentView === 'audience-insights' && user) {
       loadAudienceInsights(audienceMetricType);
     }
   }, [currentView, audienceMetricType]);
+
+  useEffect(() => {
+    if (currentView === 'growth-copilot' && user) {
+      loadSocialAnalysis();
+    }
+  }, [currentView, user]);
 
 
   // ============================================================================
@@ -288,12 +343,42 @@ export default function ThreadlineCRM() {
         loadLeads(),
         loadSalesPages(),
         loadScheduledPosts(),
+        loadClients(),
+        loadContentItems(),
+        loadReports(),
         loadSettings(),
       ]);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getClientScopeParams = () => (
+    selectedClientId && selectedClientId !== 'all'
+      ? { clientId: selectedClientId }
+      : {}
+  );
+
+  const getSelectedClientForCreate = () => (
+    selectedClientId && !['all', 'unassigned'].includes(selectedClientId)
+      ? selectedClientId
+      : ''
+  );
+
+  const loadScopedData = async () => {
+    try {
+      await Promise.all([
+        loadConversations(),
+        loadLeads(),
+        loadSalesPages(),
+        loadScheduledPosts(),
+        loadContentItems(),
+        loadReports()
+      ]);
+    } catch (error) {
+      console.error('Error loading scoped data:', error);
     }
   };
 
@@ -314,6 +399,50 @@ export default function ThreadlineCRM() {
     }
   };
 
+  const loadSocialAnalysis = async () => {
+    setSocialAnalysisLoading(true);
+    setSocialAnalysisError(null);
+    try {
+      const data = await socialAnalyzerAPI.getOverview(getClientScopeParams());
+      setSocialAnalysis(data);
+    } catch (error) {
+      console.error('Error loading social analysis:', error);
+      setSocialAnalysisError(error.response?.data?.error || 'Failed to load social analysis');
+      setSocialAnalysis(null);
+    } finally {
+      setSocialAnalysisLoading(false);
+    }
+  };
+
+  const syncInstagramAnalysis = async () => {
+    setSocialSyncLoading(true);
+    setSocialAnalysisError(null);
+    try {
+      await socialAnalyzerAPI.syncInstagram();
+      await loadSocialAnalysis();
+    } catch (error) {
+      console.error('Error syncing Instagram analysis:', error);
+      setSocialAnalysisError(error.response?.data?.error || 'Failed to sync Instagram media');
+    } finally {
+      setSocialSyncLoading(false);
+    }
+  };
+
+  const generateWeeklyReport = async () => {
+    setWeeklyReportLoading(true);
+    setSocialAnalysisError(null);
+    try {
+      const data = await socialAnalyzerAPI.getWeeklyReport(7, true, getClientScopeParams());
+      setWeeklyReport(data);
+      await loadReports();
+    } catch (error) {
+      console.error('Error generating weekly report:', error);
+      setSocialAnalysisError(error.response?.data?.error || 'Failed to generate weekly report');
+    } finally {
+      setWeeklyReportLoading(false);
+    }
+  };
+
   const loadSettings = async () => {
     try {
       const data = await settingsAPI.getSettings();
@@ -329,7 +458,7 @@ export default function ThreadlineCRM() {
 
   const loadConversations = async () => {
     try {
-      const data = await messagesAPI.getConversations();
+      const data = await messagesAPI.getConversations(getClientScopeParams());
       setConversations(data || []);
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -339,7 +468,7 @@ export default function ThreadlineCRM() {
 
   const loadLeads = async () => {
     try {
-      const data = await leadsAPI.getLeads();
+      const data = await leadsAPI.getLeads(getClientScopeParams());
       setLeads(data || []);
     } catch (error) {
       console.error('Error loading leads:', error);
@@ -349,7 +478,7 @@ export default function ThreadlineCRM() {
 
   const loadSalesPages = async () => {
     try {
-      const data = await salesPagesAPI.getPages();
+      const data = await salesPagesAPI.getPages(getClientScopeParams());
       setSalesPages(data || []);
     } catch (error) {
       console.error('Error loading sales pages:', error);
@@ -359,11 +488,41 @@ export default function ThreadlineCRM() {
 
   const loadScheduledPosts = async () => {
     try {
-      const data = await schedulerAPI.getPosts();
+      const data = await schedulerAPI.getPosts(getClientScopeParams());
       setScheduledPosts(data || []);
     } catch (error) {
       console.error('Error loading scheduled posts:', error);
       setScheduledPosts([]);
+    }
+  };
+
+  const loadClients = async () => {
+    try {
+      const data = await clientsAPI.getClients({ status: 'all' });
+      setClients(data || []);
+    } catch (error) {
+      console.error('Error loading clients:', error);
+      setClients([]);
+    }
+  };
+
+  const loadContentItems = async () => {
+    try {
+      const data = await contentPlannerAPI.getItems({ status: 'all', ...getClientScopeParams() });
+      setContentItems(data || []);
+    } catch (error) {
+      console.error('Error loading content planner:', error);
+      setContentItems([]);
+    }
+  };
+
+  const loadReports = async () => {
+    try {
+      const data = await reportsAPI.getReports({ status: 'all', ...getClientScopeParams() });
+      setReports(data || []);
+    } catch (error) {
+      console.error('Error loading reports:', error);
+      setReports([]);
     }
   };
 
@@ -436,7 +595,7 @@ export default function ThreadlineCRM() {
       await schedulerAPI.createPost(schedulerForm);
       await loadScheduledPosts();
       setShowSchedulerForm(false);
-      setSchedulerForm({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '' });
+      setSchedulerForm({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '', clientId: getSelectedClientForCreate() });
     } catch (error) {
       console.error('Error creating post:', error);
       alert(error.response?.data?.error || 'Failed to schedule post');
@@ -478,7 +637,7 @@ export default function ThreadlineCRM() {
       });
       await loadSalesPages();
       setShowSalesPageForm(false);
-      setSalesPageForm({ title: '', description: '', price: '', imageUrl: '' });
+      setSalesPageForm({ title: '', description: '', price: '', imageUrl: '', clientId: getSelectedClientForCreate() });
       setEditingSalesPage(null);
     } catch (error) {
       console.error('Error creating sales page:', error);
@@ -499,7 +658,7 @@ export default function ThreadlineCRM() {
       });
       await loadSalesPages();
       setShowSalesPageForm(false);
-      setSalesPageForm({ title: '', description: '', price: '', imageUrl: '' });
+      setSalesPageForm({ title: '', description: '', price: '', imageUrl: '', clientId: getSelectedClientForCreate() });
       setEditingSalesPage(null);
     } catch (error) {
       console.error('Error updating sales page:', error);
@@ -587,9 +746,170 @@ export default function ThreadlineCRM() {
       title: page.title,
       description: page.description,
       price: page.price.toString(),
-      imageUrl: page.imageUrl || ''
+      imageUrl: page.imageUrl || '',
+      clientId: page.clientId?._id || page.clientId || ''
     });
     setShowSalesPageForm(true);
+  };
+
+  const resetClientForm = () => {
+    setClientForm({
+      name: '',
+      industry: '',
+      website: '',
+      instagramHandle: '',
+      youtubeChannel: '',
+      contactName: '',
+      contactEmail: '',
+      notes: '',
+      status: 'active'
+    });
+    setEditingClient(null);
+  };
+
+  const openCreateClient = () => {
+    resetClientForm();
+    setShowClientForm(true);
+  };
+
+  const openEditClient = (client) => {
+    setEditingClient(client);
+    setClientForm({
+      name: client.name || '',
+      industry: client.industry || '',
+      website: client.website || '',
+      instagramHandle: client.instagramHandle || '',
+      youtubeChannel: client.youtubeChannel || '',
+      contactName: client.contactName || '',
+      contactEmail: client.contactEmail || '',
+      notes: client.notes || '',
+      status: client.status || 'active'
+    });
+    setShowClientForm(true);
+  };
+
+  const handleSaveClient = async (e) => {
+    e.preventDefault();
+    setFormLoading(true);
+    try {
+      if (editingClient) {
+        await clientsAPI.updateClient(editingClient._id, clientForm);
+      } else {
+        await clientsAPI.createClient(clientForm);
+      }
+      await loadClients();
+      setShowClientForm(false);
+      resetClientForm();
+    } catch (error) {
+      console.error('Error saving client:', error);
+      alert(error.response?.data?.error || 'Failed to save client');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleArchiveClient = async (clientId) => {
+    if (!confirm('Archive this client?')) return;
+    try {
+      await clientsAPI.archiveClient(clientId);
+      await loadClients();
+    } catch (error) {
+      console.error('Error archiving client:', error);
+      alert('Failed to archive client');
+    }
+  };
+
+  const resetContentForm = () => {
+    setContentForm({
+      clientId: getSelectedClientForCreate(),
+      title: '',
+      platform: 'instagram',
+      contentType: 'post',
+      caption: '',
+      hashtags: '',
+      dueDate: '',
+      status: 'idea',
+      approvalStatus: 'internal',
+      assetUrl: '',
+      notes: ''
+    });
+    setEditingContentItem(null);
+  };
+
+  const openCreateContentItem = () => {
+    resetContentForm();
+    setShowContentForm(true);
+  };
+
+  const formatDateTimeLocal = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+
+  const openEditContentItem = (item) => {
+    setEditingContentItem(item);
+    setContentForm({
+      clientId: item.clientId?._id || item.clientId || '',
+      title: item.title || '',
+      platform: item.platform || 'instagram',
+      contentType: item.contentType || 'post',
+      caption: item.caption || '',
+      hashtags: (item.hashtags || []).join(', '),
+      dueDate: formatDateTimeLocal(item.dueDate),
+      status: item.status || 'idea',
+      approvalStatus: item.approvalStatus || 'internal',
+      assetUrl: item.assetUrl || '',
+      notes: item.notes || ''
+    });
+    setShowContentForm(true);
+  };
+
+  const handleSaveContentItem = async (e) => {
+    e.preventDefault();
+    setFormLoading(true);
+    try {
+      const payload = {
+        ...contentForm,
+        clientId: contentForm.clientId || null,
+        dueDate: contentForm.dueDate || null
+      };
+      if (editingContentItem) {
+        await contentPlannerAPI.updateItem(editingContentItem._id, payload);
+      } else {
+        await contentPlannerAPI.createItem(payload);
+      }
+      await loadContentItems();
+      setShowContentForm(false);
+      resetContentForm();
+    } catch (error) {
+      console.error('Error saving content item:', error);
+      alert(error.response?.data?.error || 'Failed to save content item');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleArchiveContentItem = async (itemId) => {
+    if (!confirm('Archive this content item?')) return;
+    try {
+      await contentPlannerAPI.archiveItem(itemId);
+      await loadContentItems();
+    } catch (error) {
+      console.error('Error archiving content item:', error);
+      alert('Failed to archive content item');
+    }
+  };
+
+  const quickUpdateContentItem = async (item, data) => {
+    try {
+      await contentPlannerAPI.updateItem(item._id, data);
+      await loadContentItems();
+    } catch (error) {
+      console.error('Error updating content item:', error);
+      alert(error.response?.data?.error || 'Failed to update content item');
+    }
   };
 
   const getStats = () => {
@@ -771,6 +1091,1025 @@ export default function ThreadlineCRM() {
             ))}
           </div>
         </div>
+      </div>
+    );
+  };
+
+  const renderClientDashboard = () => {
+    const selectedClient = clients.find(client => client._id === selectedClientId);
+    const scopeLabel = selectedClient
+      ? selectedClient.name
+      : selectedClientId === 'unassigned'
+        ? 'Unassigned Work'
+        : 'All Clients';
+
+    const stats = getStats();
+    const upcomingContent = contentItems
+      .filter(item => item.status !== 'published' && item.status !== 'archived')
+      .sort((a, b) => new Date(a.dueDate || '2999-01-01') - new Date(b.dueDate || '2999-01-01'))
+      .slice(0, 5);
+    const approvalQueue = contentItems
+      .filter(item => ['needs_client_review', 'changes_requested'].includes(item.approvalStatus))
+      .slice(0, 5);
+    const upcomingPosts = scheduledPosts
+      .filter(post => post.status === 'scheduled')
+      .sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor))
+      .slice(0, 5);
+    const latestReports = reports
+      .filter(report => report.status !== 'archived')
+      .slice(0, 3);
+    const activeSalesPages = salesPages.filter(page => page.active !== false);
+    const openLeads = leads.filter(lead => !['closed', 'lost'].includes(lead.funnelState));
+
+    return (
+      <div className="view-content">
+        <div className="view-header">
+          <div>
+            <h1>Client Dashboard</h1>
+            <p className="view-subtitle">{scopeLabel} command center</p>
+          </div>
+          <div className="header-actions">
+            <button className="btn-secondary" onClick={() => setCurrentView('content-planner')}>
+              <Edit size={16} />
+              Planner
+            </button>
+            <button className="btn-secondary" onClick={() => setCurrentView('reports')}>
+              <BarChart3 size={16} />
+              Reports
+            </button>
+          </div>
+        </div>
+
+        {selectedClient && (
+          <div className="client-summary-band">
+            <div>
+              <h2>{selectedClient.name}</h2>
+              <p>{selectedClient.industry || 'No industry set'}</p>
+            </div>
+            <div className="client-summary-meta">
+              {selectedClient.instagramHandle && <span>@{selectedClient.instagramHandle}</span>}
+              {selectedClient.youtubeChannel && <span>{selectedClient.youtubeChannel}</span>}
+              {selectedClient.website && <a href={selectedClient.website} target="_blank" rel="noreferrer">Website</a>}
+            </div>
+          </div>
+        )}
+
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-icon leads">
+              <Users size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Open Leads</div>
+              <div className="stat-value">{openLeads.length}</div>
+              <div className="stat-change neutral">{stats.totalLeads} total</div>
+            </div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon messages">
+              <MessageSquare size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Unread</div>
+              <div className="stat-value">{stats.unreadMessages}</div>
+              <div className="stat-change warning">Inbox priority</div>
+            </div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon conversion">
+              <Calendar size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Planned Content</div>
+              <div className="stat-value">{upcomingContent.length}</div>
+              <div className="stat-change neutral">{approvalQueue.length} in approval</div>
+            </div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon revenue">
+              <DollarSign size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Revenue</div>
+              <div className="stat-value">${stats.totalRevenue.toLocaleString()}</div>
+              <div className="stat-change neutral">{activeSalesPages.length} active pages</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="client-dashboard-grid">
+          <div className="section">
+            <div className="section-header">
+              <h2>Next Content</h2>
+              <button className="btn-text" onClick={() => setCurrentView('content-planner')}>Open Planner</button>
+            </div>
+            <div className="leads-quick-list">
+              {upcomingContent.length > 0 ? upcomingContent.map(item => (
+                <div key={item._id} className="lead-quick-item" onClick={() => openEditContentItem(item)}>
+                  <div className="lead-quick-left">
+                    <div className="avatar-small"><Edit size={14} /></div>
+                    <div>
+                      <div className="lead-quick-name">{item.title}</div>
+                      <div className="lead-quick-source">
+                        {item.platform} - {item.contentType} - {item.dueDate ? new Date(item.dueDate).toLocaleString() : 'No due date'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`content-status ${item.status}`}>{item.status}</div>
+                </div>
+              )) : (
+                <div className="empty-state"><p>No upcoming content in this scope.</p></div>
+              )}
+            </div>
+          </div>
+
+          <div className="section">
+            <div className="section-header">
+              <h2>Approval Queue</h2>
+            </div>
+            <div className="leads-quick-list">
+              {approvalQueue.length > 0 ? approvalQueue.map(item => (
+                <div key={item._id} className="lead-quick-item" onClick={() => openEditContentItem(item)}>
+                  <div className="lead-quick-left">
+                    <div className="avatar-small"><CheckCircle size={14} /></div>
+                    <div>
+                      <div className="lead-quick-name">{item.title}</div>
+                      <div className="lead-quick-source">{item.approvalStatus.replaceAll('_', ' ')}</div>
+                    </div>
+                  </div>
+                  <button className="btn-text" onClick={(e) => {
+                    e.stopPropagation();
+                    quickUpdateContentItem(item, { approvalStatus: 'approved' });
+                  }}>Approve</button>
+                </div>
+              )) : (
+                <div className="empty-state"><p>No approval items pending.</p></div>
+              )}
+            </div>
+          </div>
+
+          <div className="section">
+            <div className="section-header">
+              <h2>Scheduled Posts</h2>
+              <button className="btn-text" onClick={() => setCurrentView('scheduler')}>Open Scheduler</button>
+            </div>
+            <div className="leads-quick-list">
+              {upcomingPosts.length > 0 ? upcomingPosts.map(post => (
+                <div key={post._id} className="lead-quick-item">
+                  <div className="lead-quick-left">
+                    <div className="avatar-small"><Calendar size={14} /></div>
+                    <div>
+                      <div className="lead-quick-name">{post.caption.slice(0, 72)}</div>
+                      <div className="lead-quick-source">{new Date(post.scheduledFor).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div className={`funnel-badge ${post.status}`}>{post.status}</div>
+                </div>
+              )) : (
+                <div className="empty-state"><p>No scheduled posts in this scope.</p></div>
+              )}
+            </div>
+          </div>
+
+          <div className="section">
+            <div className="section-header">
+              <h2>Recent Reports</h2>
+              <button className="btn-text" onClick={() => setCurrentView('reports')}>Open Reports</button>
+            </div>
+            <div className="leads-quick-list">
+              {latestReports.length > 0 ? latestReports.map(report => (
+                <div key={report._id} className="lead-quick-item">
+                  <div className="lead-quick-left">
+                    <div className="avatar-small"><BarChart3 size={14} /></div>
+                    <div>
+                      <div className="lead-quick-name">{report.title}</div>
+                      <div className="lead-quick-source">{new Date(report.createdAt).toLocaleDateString()}</div>
+                    </div>
+                  </div>
+                  <button className="btn-text" onClick={() => navigator.clipboard.writeText(report.text || '')}>Copy</button>
+                </div>
+              )) : (
+                <div className="empty-state"><p>No saved reports in this scope.</p></div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderGrowthCopilot = () => {
+    const summary = socialAnalysis?.summary || {};
+    const recommendations = socialAnalysis?.recommendations || [];
+
+    return (
+      <div className="view-content">
+        <div className="view-header">
+          <div>
+            <h1>Growth Copilot</h1>
+            <p className="view-subtitle">Actionable social media analysis for Instagram now, YouTube next</p>
+          </div>
+          <div className="header-actions">
+            <button className="btn-secondary" onClick={syncInstagramAnalysis} disabled={socialSyncLoading}>
+              <Instagram size={16} />
+              {socialSyncLoading ? 'Syncing...' : 'Sync Instagram'}
+            </button>
+            <button className="btn-secondary" onClick={generateWeeklyReport} disabled={weeklyReportLoading}>
+              <BarChart3 size={16} />
+              {weeklyReportLoading ? 'Generating...' : 'Weekly Report'}
+            </button>
+            <button className="btn-secondary" onClick={loadSocialAnalysis} disabled={socialAnalysisLoading}>
+              <TrendingUp size={16} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {socialAnalysisLoading && (
+          <div className="empty-state">
+            <p>Analyzing recent posts, inbox activity, and leads...</p>
+          </div>
+        )}
+
+        {socialAnalysisError && (
+          <div className="alert-item urgent">
+            <AlertCircle size={18} />
+            <span>{socialAnalysisError}</span>
+          </div>
+        )}
+
+        {socialAnalysis && (
+          <>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-icon conversion">
+                  <BarChart3 size={20} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">Posts Analyzed</div>
+                  <div className="stat-value">{summary.publishedPosts || 0}</div>
+                  <div className="stat-change neutral">Last 30 days</div>
+                </div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-icon messages">
+                  <MessageSquare size={20} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">Open Conversations</div>
+                  <div className="stat-value">{summary.openConversations || 0}</div>
+                  <div className="stat-change warning">Reply priority</div>
+                </div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-icon leads">
+                  <Users size={20} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">Lead Conversion</div>
+                  <div className="stat-value">{summary.conversionRate || 0}%</div>
+                  <div className="stat-change neutral">{summary.closedLeads || 0} closed of {summary.totalLeads || 0}</div>
+                </div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-icon revenue">
+                  <Calendar size={20} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">Queued Posts</div>
+                  <div className="stat-value">{summary.scheduledUpcoming || 0}</div>
+                  <div className="stat-change neutral">Upcoming content</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-header">
+                <h2>Recommended Next Actions</h2>
+              </div>
+              <div className="alerts-list">
+                {recommendations.length > 0 ? recommendations.map((item, index) => (
+                  <div key={`${item.type}-${index}`} className={`alert-item ${item.priority === 'high' ? 'urgent' : 'warning'}`}>
+                    <TrendingUp size={18} />
+                    <span><strong>{item.title}</strong> - {item.detail}</span>
+                  </div>
+                )) : (
+                  <div className="empty-state">
+                    <p>No recommendations yet. Connect Instagram and publish more tracked posts to unlock better analysis.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {weeklyReport && (
+              <div className="section">
+                <div className="section-header">
+                  <h2>Weekly Client Report</h2>
+                  <button
+                    className="btn-text"
+                    onClick={() => navigator.clipboard.writeText(weeklyReport.text || '')}
+                  >
+                    Copy Report
+                  </button>
+                </div>
+
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-icon conversion">
+                      <TrendingUp size={20} />
+                    </div>
+                    <div className="stat-content">
+                      <div className="stat-label">Engagement Change</div>
+                      <div className="stat-value">{weeklyReport.report?.changes?.engagementActions || 0}%</div>
+                      <div className="stat-change neutral">vs previous week</div>
+                    </div>
+                  </div>
+
+                  <div className="stat-card">
+                    <div className="stat-icon leads">
+                      <Users size={20} />
+                    </div>
+                    <div className="stat-content">
+                      <div className="stat-label">Lead Change</div>
+                      <div className="stat-value">{weeklyReport.report?.changes?.leads || 0}%</div>
+                      <div className="stat-change neutral">vs previous week</div>
+                    </div>
+                  </div>
+                </div>
+
+                <pre className="report-preview">{weeklyReport.text}</pre>
+              </div>
+            )}
+
+            <div className="section">
+              <div className="section-header">
+                <h2>Top Posts</h2>
+              </div>
+              <div className="leads-quick-list">
+                {(socialAnalysis.topPosts || []).length > 0 ? socialAnalysis.topPosts.map(post => (
+                  <div key={post.id} className="lead-quick-item">
+                    <div className="lead-quick-left">
+                      <div className="avatar-small">
+                        <Instagram size={14} />
+                      </div>
+                      <div>
+                        <div className="lead-quick-name">{post.caption ? post.caption.slice(0, 72) : 'Instagram post'}</div>
+                        <div className="lead-quick-source">{post.likes || 0} likes - {post.comments || 0} comments - {post.engagementActions || 0} actions</div>
+                      </div>
+                    </div>
+                    {post.permalink && (
+                      <a className="btn-text" href={post.permalink} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    )}
+                  </div>
+                )) : (
+                  <div className="empty-state">
+                    <p>No synced post data yet. Use Sync Instagram to pull recent media.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-header">
+                <h2>Needs Attention</h2>
+              </div>
+              <div className="leads-quick-list">
+                {(socialAnalysis.underperformingPosts || []).length > 0 ? socialAnalysis.underperformingPosts.map(post => (
+                  <div key={post.id} className="lead-quick-item">
+                    <div className="lead-quick-left">
+                      <div className="avatar-small">
+                        <AlertCircle size={14} />
+                      </div>
+                      <div>
+                        <div className="lead-quick-name">{post.caption ? post.caption.slice(0, 72) : 'Instagram post'}</div>
+                        <div className="lead-quick-source">{post.likes || 0} likes - {post.comments || 0} comments - below recent baseline</div>
+                      </div>
+                    </div>
+                    {post.permalink && (
+                      <a className="btn-text" href={post.permalink} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    )}
+                  </div>
+                )) : (
+                  <div className="empty-state">
+                    <p>No underperforming posts detected from the available snapshots.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-header">
+                <h2>Top Hashtags</h2>
+              </div>
+              <div className="leads-quick-list">
+                {(socialAnalysis.topHashtags || []).length > 0 ? socialAnalysis.topHashtags.map(tag => (
+                  <div key={tag.tag} className="lead-quick-item">
+                    <div className="lead-quick-left">
+                      <div className="avatar-small">#</div>
+                      <div>
+                        <div className="lead-quick-name">{tag.tag}</div>
+                        <div className="lead-quick-source">{tag.uses} uses - {tag.averageActions || 0} avg actions</div>
+                      </div>
+                    </div>
+                    <div className="funnel-badge interested">{tag.likes + tag.comments} actions</div>
+                  </div>
+                )) : (
+                  <div className="empty-state">
+                    <p>No hashtag performance yet.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderClients = () => {
+    const activeClients = clients.filter(client => client.status === 'active');
+    const pausedClients = clients.filter(client => client.status === 'paused');
+    const archivedClients = clients.filter(client => client.status === 'archived');
+
+    const renderClientCard = (client) => (
+      <div key={client._id} className="client-card">
+        <div className="client-card-main">
+          <div className="client-avatar">
+            {client.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="client-info">
+            <div className="client-title-row">
+              <h3>{client.name}</h3>
+              <span className={`client-status ${client.status}`}>{client.status}</span>
+            </div>
+            <div className="client-meta">
+              {client.industry && <span>{client.industry}</span>}
+              {client.instagramHandle && <span>@{client.instagramHandle}</span>}
+              {client.youtubeChannel && <span>{client.youtubeChannel}</span>}
+            </div>
+            {(client.contactName || client.contactEmail) && (
+              <div className="client-contact">
+                {client.contactName}
+                {client.contactName && client.contactEmail ? ' - ' : ''}
+                {client.contactEmail}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="client-actions">
+          {client.website && (
+            <a className="btn-text" href={client.website} target="_blank" rel="noreferrer">
+              Website
+            </a>
+          )}
+          <button className="btn-text" onClick={() => openEditClient(client)}>
+            <Edit size={14} />
+            Edit
+          </button>
+          {client.status !== 'archived' && (
+            <button className="btn-text danger" onClick={() => handleArchiveClient(client._id)}>
+              <Trash2 size={14} />
+              Archive
+            </button>
+          )}
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="view-content">
+        <div className="view-header">
+          <div>
+            <h1>Clients</h1>
+            <p className="view-subtitle">Manage the brands and companies your agency handles</p>
+          </div>
+          <button className="btn-primary" onClick={openCreateClient}>
+            <Plus size={18} />
+            Add Client
+          </button>
+        </div>
+
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-icon leads">
+              <Users size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Active Clients</div>
+              <div className="stat-value">{activeClients.length}</div>
+              <div className="stat-change neutral">{clients.length} total</div>
+            </div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon messages">
+              <Clock size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Paused</div>
+              <div className="stat-value">{pausedClients.length}</div>
+              <div className="stat-change neutral">Needs review</div>
+            </div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon revenue">
+              <Globe size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Archived</div>
+              <div className="stat-value">{archivedClients.length}</div>
+              <div className="stat-change neutral">Hidden from active work</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="section">
+          <div className="section-header">
+            <h2>Active Clients</h2>
+          </div>
+          <div className="clients-grid">
+            {activeClients.length > 0 ? activeClients.map(renderClientCard) : (
+              <div className="empty-state">
+                <p>No active clients yet. Add your first client to start building the agency workspace.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {pausedClients.length > 0 && (
+          <div className="section">
+            <div className="section-header">
+              <h2>Paused Clients</h2>
+            </div>
+            <div className="clients-grid">
+              {pausedClients.map(renderClientCard)}
+            </div>
+          </div>
+        )}
+
+        {archivedClients.length > 0 && (
+          <div className="section">
+            <div className="section-header">
+              <h2>Archived Clients</h2>
+            </div>
+            <div className="clients-grid">
+              {archivedClients.map(renderClientCard)}
+            </div>
+          </div>
+        )}
+
+        {showClientForm && (
+          <div className="modal-overlay" onClick={() => setShowClientForm(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>{editingClient ? 'Edit Client' : 'Add Client'}</h2>
+                <button className="btn-text" type="button" onClick={() => setShowClientForm(false)}>
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleSaveClient} className="modal-form">
+                <input
+                  type="text"
+                  placeholder="Client or brand name"
+                  value={clientForm.name}
+                  onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })}
+                  required
+                />
+                <div className="form-row">
+                  <input
+                    type="text"
+                    placeholder="Industry"
+                    value={clientForm.industry}
+                    onChange={(e) => setClientForm({ ...clientForm, industry: e.target.value })}
+                  />
+                  <select
+                    value={clientForm.status}
+                    onChange={(e) => setClientForm({ ...clientForm, status: e.target.value })}
+                  >
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+                <input
+                  type="url"
+                  placeholder="Website URL"
+                  value={clientForm.website}
+                  onChange={(e) => setClientForm({ ...clientForm, website: e.target.value })}
+                />
+                <div className="form-row">
+                  <input
+                    type="text"
+                    placeholder="Instagram handle"
+                    value={clientForm.instagramHandle}
+                    onChange={(e) => setClientForm({ ...clientForm, instagramHandle: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    placeholder="YouTube channel"
+                    value={clientForm.youtubeChannel}
+                    onChange={(e) => setClientForm({ ...clientForm, youtubeChannel: e.target.value })}
+                  />
+                </div>
+                <div className="form-row">
+                  <input
+                    type="text"
+                    placeholder="Contact name"
+                    value={clientForm.contactName}
+                    onChange={(e) => setClientForm({ ...clientForm, contactName: e.target.value })}
+                  />
+                  <input
+                    type="email"
+                    placeholder="Contact email"
+                    value={clientForm.contactEmail}
+                    onChange={(e) => setClientForm({ ...clientForm, contactEmail: e.target.value })}
+                  />
+                </div>
+                <textarea
+                  placeholder="Client notes, goals, brand constraints, or reporting expectations"
+                  value={clientForm.notes}
+                  onChange={(e) => setClientForm({ ...clientForm, notes: e.target.value })}
+                  rows={4}
+                />
+                <button type="submit" className="btn-primary" disabled={formLoading}>
+                  {formLoading ? 'Saving...' : editingClient ? 'Save Changes' : 'Create Client'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderContentPlanner = () => {
+    const visibleItems = contentItems.filter(item => contentFilter === 'all' || item.status === contentFilter);
+    const upcomingItems = contentItems.filter(item =>
+      item.status !== 'published' &&
+      item.status !== 'archived' &&
+      item.dueDate &&
+      new Date(item.dueDate) >= new Date()
+    );
+    const overdueItems = contentItems.filter(item =>
+      ['idea', 'draft', 'scheduled'].includes(item.status) &&
+      item.dueDate &&
+      new Date(item.dueDate) < new Date()
+    );
+    const needsApproval = contentItems.filter(item => item.approvalStatus === 'needs_client_review' || item.approvalStatus === 'changes_requested');
+    const plannerStatuses = ['all', 'idea', 'draft', 'scheduled', 'published', 'archived'];
+
+    const renderItemCard = (item) => {
+      const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+      const isOverdue = dueDate && dueDate < new Date() && ['idea', 'draft', 'scheduled'].includes(item.status);
+      const clientName = item.clientId?.name || 'No client';
+
+      return (
+        <div key={item._id} className={`content-card ${isOverdue ? 'overdue' : ''}`}>
+          <div className="content-card-top">
+            <div>
+              <div className="content-title-row">
+                <h3>{item.title}</h3>
+                <span className={`content-platform ${item.platform}`}>{item.platform}</span>
+              </div>
+              <div className="content-meta">
+                <span>{clientName}</span>
+                <span>{item.contentType}</span>
+                {dueDate && <span>{dueDate.toLocaleString()}</span>}
+              </div>
+            </div>
+            <div className="content-badges">
+              <span className={`content-status ${item.status}`}>{item.status}</span>
+              <span className={`approval-status ${item.approvalStatus}`}>{item.approvalStatus.replaceAll('_', ' ')}</span>
+            </div>
+          </div>
+
+          {item.caption && (
+            <p className="content-caption">{item.caption}</p>
+          )}
+
+          {item.hashtags?.length > 0 && (
+            <div className="content-tags">
+              {item.hashtags.slice(0, 8).map(tag => (
+                <span key={tag}>#{tag}</span>
+              ))}
+            </div>
+          )}
+
+          <div className="content-actions">
+            <button className="btn-text" onClick={() => openEditContentItem(item)}>
+              <Edit size={14} />
+              Edit
+            </button>
+            {item.status === 'idea' && (
+              <button className="btn-text" onClick={() => quickUpdateContentItem(item, { status: 'draft' })}>
+                Draft
+              </button>
+            )}
+            {item.status === 'draft' && (
+              <button className="btn-text" onClick={() => quickUpdateContentItem(item, { approvalStatus: 'needs_client_review' })}>
+                Send Review
+              </button>
+            )}
+            {item.approvalStatus === 'needs_client_review' && (
+              <button className="btn-text" onClick={() => quickUpdateContentItem(item, { approvalStatus: 'approved' })}>
+                Approve
+              </button>
+            )}
+            {item.status !== 'archived' && (
+              <button className="btn-text danger" onClick={() => handleArchiveContentItem(item._id)}>
+                <Trash2 size={14} />
+                Archive
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div className="view-content">
+        <div className="view-header">
+          <div>
+            <h1>Content Planner</h1>
+            <p className="view-subtitle">Plan posts, approvals, captions, hashtags, and platform work per client</p>
+          </div>
+          <button className="btn-primary" onClick={openCreateContentItem}>
+            <Plus size={18} />
+            New Content
+          </button>
+        </div>
+
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-icon conversion">
+              <Calendar size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Upcoming</div>
+              <div className="stat-value">{upcomingItems.length}</div>
+              <div className="stat-change neutral">Planned content</div>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon messages">
+              <AlertCircle size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Overdue</div>
+              <div className="stat-value">{overdueItems.length}</div>
+              <div className="stat-change warning">Needs attention</div>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon leads">
+              <CheckCircle size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Approval Queue</div>
+              <div className="stat-value">{needsApproval.length}</div>
+              <div className="stat-change neutral">Client-facing work</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="filter-tabs">
+          {plannerStatuses.map(status => (
+            <button
+              key={status}
+              className={contentFilter === status ? 'active' : ''}
+              onClick={() => setContentFilter(status)}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
+
+        <div className="content-grid">
+          {visibleItems.length > 0 ? visibleItems.map(renderItemCard) : (
+            <div className="empty-state">
+              <p>No content items found. Create your first planned post, reel, short, or video.</p>
+            </div>
+          )}
+        </div>
+
+        {showContentForm && (
+          <div className="modal-overlay" onClick={() => setShowContentForm(false)}>
+            <div className="modal-content wide" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>{editingContentItem ? 'Edit Content' : 'New Content'}</h2>
+                <button className="btn-text" type="button" onClick={() => setShowContentForm(false)}>
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleSaveContentItem} className="modal-form">
+                <input
+                  type="text"
+                  placeholder="Content title"
+                  value={contentForm.title}
+                  onChange={(e) => setContentForm({ ...contentForm, title: e.target.value })}
+                  required
+                />
+                <div className="form-row">
+                  <select
+                    value={contentForm.clientId}
+                    onChange={(e) => setContentForm({ ...contentForm, clientId: e.target.value })}
+                  >
+                    <option value="">No client</option>
+                    {clients.filter(client => client.status !== 'archived').map(client => (
+                      <option key={client._id} value={client._id}>{client.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="datetime-local"
+                    value={contentForm.dueDate}
+                    onChange={(e) => setContentForm({ ...contentForm, dueDate: e.target.value })}
+                  />
+                </div>
+                <div className="form-row">
+                  <select
+                    value={contentForm.platform}
+                    onChange={(e) => setContentForm({ ...contentForm, platform: e.target.value })}
+                  >
+                    <option value="instagram">Instagram</option>
+                    <option value="youtube">YouTube</option>
+                    <option value="both">Both</option>
+                  </select>
+                  <select
+                    value={contentForm.contentType}
+                    onChange={(e) => setContentForm({ ...contentForm, contentType: e.target.value })}
+                  >
+                    <option value="post">Post</option>
+                    <option value="reel">Reel</option>
+                    <option value="story">Story</option>
+                    <option value="short">Short</option>
+                    <option value="video">Video</option>
+                    <option value="carousel">Carousel</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <select
+                    value={contentForm.status}
+                    onChange={(e) => setContentForm({ ...contentForm, status: e.target.value })}
+                  >
+                    <option value="idea">Idea</option>
+                    <option value="draft">Draft</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="published">Published</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                  <select
+                    value={contentForm.approvalStatus}
+                    onChange={(e) => setContentForm({ ...contentForm, approvalStatus: e.target.value })}
+                  >
+                    <option value="internal">Internal</option>
+                    <option value="needs_client_review">Needs Client Review</option>
+                    <option value="approved">Approved</option>
+                    <option value="changes_requested">Changes Requested</option>
+                  </select>
+                </div>
+                <textarea
+                  placeholder="Caption, hook, CTA, or script outline"
+                  value={contentForm.caption}
+                  onChange={(e) => setContentForm({ ...contentForm, caption: e.target.value })}
+                  rows={5}
+                />
+                <input
+                  type="text"
+                  placeholder="Hashtags, comma separated"
+                  value={contentForm.hashtags}
+                  onChange={(e) => setContentForm({ ...contentForm, hashtags: e.target.value })}
+                />
+                <input
+                  type="url"
+                  placeholder="Asset URL"
+                  value={contentForm.assetUrl}
+                  onChange={(e) => setContentForm({ ...contentForm, assetUrl: e.target.value })}
+                />
+                <textarea
+                  placeholder="Internal notes, client constraints, or production checklist"
+                  value={contentForm.notes}
+                  onChange={(e) => setContentForm({ ...contentForm, notes: e.target.value })}
+                  rows={3}
+                />
+                <button type="submit" className="btn-primary" disabled={formLoading}>
+                  {formLoading ? 'Saving...' : editingContentItem ? 'Save Changes' : 'Create Content'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderReports = () => {
+    const activeReports = reports.filter(report => report.status !== 'archived');
+    const archivedReports = reports.filter(report => report.status === 'archived');
+
+    const archiveReport = async (reportId) => {
+      if (!confirm('Archive this report?')) return;
+      try {
+        await reportsAPI.archiveReport(reportId);
+        await loadReports();
+      } catch (error) {
+        console.error('Error archiving report:', error);
+        alert('Failed to archive report');
+      }
+    };
+
+    const renderReportCard = (report) => (
+      <div key={report._id} className="report-card">
+        <div className="report-card-header">
+          <div>
+            <h3>{report.title}</h3>
+            <div className="content-meta">
+              <span>{report.type.replace('_', ' ')}</span>
+              <span>{new Date(report.createdAt).toLocaleString()}</span>
+              {report.clientId?.name && <span>{report.clientId.name}</span>}
+            </div>
+          </div>
+          <span className={`client-status ${report.status}`}>{report.status}</span>
+        </div>
+        <pre className="report-preview compact">{report.text}</pre>
+        <div className="content-actions">
+          <button className="btn-text" onClick={() => navigator.clipboard.writeText(report.text || '')}>
+            Copy
+          </button>
+          {report.status !== 'archived' && (
+            <button className="btn-text danger" onClick={() => archiveReport(report._id)}>
+              <Trash2 size={14} />
+              Archive
+            </button>
+          )}
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="view-content">
+        <div className="view-header">
+          <div>
+            <h1>Report Center</h1>
+            <p className="view-subtitle">Saved client-ready reports and weekly performance summaries</p>
+          </div>
+          <button className="btn-primary" onClick={generateWeeklyReport} disabled={weeklyReportLoading}>
+            <BarChart3 size={18} />
+            {weeklyReportLoading ? 'Generating...' : 'Generate Weekly'}
+          </button>
+        </div>
+
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-icon conversion">
+              <BarChart3 size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Active Reports</div>
+              <div className="stat-value">{activeReports.length}</div>
+              <div className="stat-change neutral">Ready to share</div>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon messages">
+              <Clock size={20} />
+            </div>
+            <div className="stat-content">
+              <div className="stat-label">Archived</div>
+              <div className="stat-value">{archivedReports.length}</div>
+              <div className="stat-change neutral">Historical records</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="reports-grid">
+          {activeReports.length > 0 ? activeReports.map(renderReportCard) : (
+            <div className="empty-state">
+              <p>No saved reports yet. Generate a weekly report to create the first client-ready summary.</p>
+            </div>
+          )}
+        </div>
+
+        {archivedReports.length > 0 && (
+          <div className="section">
+            <div className="section-header">
+              <h2>Archived Reports</h2>
+            </div>
+            <div className="reports-grid">
+              {archivedReports.map(renderReportCard)}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1265,7 +2604,7 @@ export default function ThreadlineCRM() {
         </div>
         <button className="btn-primary" onClick={() => {
           setEditingSalesPage(null);
-          setSalesPageForm({ title: '', description: '', price: '', imageUrl: '' });
+          setSalesPageForm({ title: '', description: '', price: '', imageUrl: '', clientId: getSelectedClientForCreate() });
           setShowSalesPageForm(true);
         }}>
           <Plus size={18} />
@@ -1292,6 +2631,16 @@ export default function ThreadlineCRM() {
                 <label>Description *</label>
                 <textarea placeholder="Describe your product or service..." value={salesPageForm.description}
                   onChange={(e) => setSalesPageForm({...salesPageForm, description: e.target.value})} required rows={3} />
+              </div>
+              <div className="form-group">
+                <label>Client</label>
+                <select value={salesPageForm.clientId || ''}
+                  onChange={(e) => setSalesPageForm({...salesPageForm, clientId: e.target.value})}>
+                  <option value="">Unassigned</option>
+                  {clients.filter(client => client.status !== 'archived').map(client => (
+                    <option key={client._id} value={client._id}>{client.name}</option>
+                  ))}
+                </select>
               </div>
               <div className="form-row">
                 <div className="form-group">
@@ -1385,7 +2734,7 @@ export default function ThreadlineCRM() {
           <p className="view-subtitle">Schedule Instagram posts</p>
         </div>
         <button className="btn-primary" onClick={() => {
-          setSchedulerForm({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '' });
+          setSchedulerForm({ caption: '', imageUrl: '', scheduledFor: '', trackingKeyword: '', clientId: getSelectedClientForCreate() });
           setShowSchedulerForm(true);
         }}>
           <Plus size={18} />
@@ -1407,6 +2756,16 @@ export default function ThreadlineCRM() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h2>Schedule a Post</h2>
             <form onSubmit={handleCreatePost}>
+              <div className="form-group">
+                <label>Client</label>
+                <select value={schedulerForm.clientId || ''}
+                  onChange={(e) => setSchedulerForm({...schedulerForm, clientId: e.target.value})}>
+                  <option value="">Unassigned</option>
+                  {clients.filter(client => client.status !== 'archived').map(client => (
+                    <option key={client._id} value={client._id}>{client.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="form-group">
                 <label>Caption *</label>
                 <textarea placeholder="Write your Instagram caption..." value={schedulerForm.caption}
@@ -1642,7 +3001,7 @@ export default function ThreadlineCRM() {
                 <p style={{fontSize: '13px', color: '#999', marginTop: '4px'}}>Connect your Instagram Business account to receive DMs, comments, and publish posts.</p>
               </div>
               <button className="btn-primary" onClick={() => {
-                window.location.href = `${window.location.protocol}//${window.location.hostname}:5000/api/auth/instagram`;
+                window.location.href = authAPI.getInstagramLoginUrl();
               }}>
                 <Instagram size={18} />
                 Connect Instagram
@@ -2229,6 +3588,17 @@ export default function ThreadlineCRM() {
           <span>Threadline CRM</span>
         </div>
 
+        <div className="client-scope">
+          <label>Client Scope</label>
+          <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)}>
+            <option value="all">All clients</option>
+            <option value="unassigned">Unassigned</option>
+            {clients.filter(client => client.status !== 'archived').map(client => (
+              <option key={client._id} value={client._id}>{client.name}</option>
+            ))}
+          </select>
+        </div>
+
         <nav className="sidebar-nav">
           <button
             className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
@@ -2236,6 +3606,14 @@ export default function ThreadlineCRM() {
           >
             <BarChart3 size={20} />
             <span>Dashboard</span>
+          </button>
+
+          <button
+            className={`nav-item ${currentView === 'client-dashboard' ? 'active' : ''}`}
+            onClick={() => setCurrentView('client-dashboard')}
+          >
+            <Globe size={20} />
+            <span>Client Dashboard</span>
           </button>
 
           <button
@@ -2247,6 +3625,14 @@ export default function ThreadlineCRM() {
             {getStats().unreadMessages > 0 && (
               <span className="nav-badge">{getStats().unreadMessages}</span>
             )}
+          </button>
+
+          <button 
+            className={`nav-item ${currentView === 'clients' ? 'active' : ''}`}
+            onClick={() => setCurrentView('clients')}
+          >
+            <Users size={20} />
+            <span>Clients</span>
           </button>
 
           <button 
@@ -2271,6 +3657,30 @@ export default function ThreadlineCRM() {
           >
             <Calendar size={20} />
             <span>Scheduler</span>
+          </button>
+
+          <button
+            className={`nav-item ${currentView === 'content-planner' ? 'active' : ''}`}
+            onClick={() => setCurrentView('content-planner')}
+          >
+            <Edit size={20} />
+            <span>Planner</span>
+          </button>
+
+          <button
+            className={`nav-item ${currentView === 'growth-copilot' ? 'active' : ''}`}
+            onClick={() => setCurrentView('growth-copilot')}
+          >
+            <TrendingUp size={20} />
+            <span>Growth Copilot</span>
+          </button>
+
+          <button
+            className={`nav-item ${currentView === 'reports' ? 'active' : ''}`}
+            onClick={() => setCurrentView('reports')}
+          >
+            <BarChart3 size={20} />
+            <span>Reports</span>
           </button>
 
           <button
@@ -2312,12 +3722,17 @@ export default function ThreadlineCRM() {
 
       <div className="main-content">
         {currentView === 'dashboard' && renderDashboard()}
+        {currentView === 'client-dashboard' && renderClientDashboard()}
         {currentView === 'inbox' && renderInbox()}
         {currentView === 'conversation' && renderConversation()}
+        {currentView === 'clients' && renderClients()}
         {currentView === 'leads' && renderLeads()}
         {currentView === 'lead-detail' && renderLeadDetail()}
         {currentView === 'sales-pages' && renderSalesPages()}
         {currentView === 'scheduler' && renderScheduler()}
+        {currentView === 'content-planner' && renderContentPlanner()}
+        {currentView === 'growth-copilot' && renderGrowthCopilot()}
+        {currentView === 'reports' && renderReports()}
         {currentView === 'audience-insights' && renderAudienceInsights()}
         {currentView === 'revenue' && renderRevenue()}
         {currentView === 'settings' && renderSettings()}
@@ -2360,6 +3775,36 @@ export default function ThreadlineCRM() {
           font-size: 18px;
           font-weight: 700;
           border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .client-scope {
+          padding: 14px 12px 4px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .client-scope label {
+          color: rgba(255, 255, 255, 0.55);
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 0 8px;
+        }
+
+        .client-scope select {
+          width: 100%;
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          background: rgba(255, 255, 255, 0.08);
+          color: #ffffff;
+          border-radius: 10px;
+          padding: 10px 12px;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .client-scope option {
+          color: #1a1a2e;
         }
 
         .sidebar-nav {
@@ -2611,6 +4056,10 @@ export default function ThreadlineCRM() {
           max-height: 90vh;
           overflow-y: auto;
           box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-content.wide {
+          max-width: 760px;
         }
 
         .modal-content h2 {
@@ -2908,6 +4357,395 @@ export default function ThreadlineCRM() {
           border-radius: 16px;
           padding: 24px;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+
+        .report-preview {
+          margin: 16px 0 0;
+          padding: 18px;
+          background: #101828;
+          color: #f8fafc;
+          border-radius: 10px;
+          white-space: pre-wrap;
+          overflow-x: auto;
+          line-height: 1.6;
+          font-size: 13px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+
+        .report-preview.compact {
+          max-height: 240px;
+          overflow: auto;
+          margin-top: 14px;
+        }
+
+        .reports-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+          gap: 16px;
+        }
+
+        .report-card {
+          background: #ffffff;
+          border: 1px solid #eeeeee;
+          border-radius: 12px;
+          padding: 18px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+        }
+
+        .report-card-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          align-items: flex-start;
+        }
+
+        .report-card-header h3 {
+          margin: 0 0 8px;
+          font-size: 17px;
+          color: #1a1a2e;
+        }
+
+        .clients-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+          gap: 16px;
+        }
+
+        .client-card {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          padding: 18px;
+          border: 1px solid #eeeeee;
+          border-radius: 12px;
+          background: #ffffff;
+        }
+
+        .client-card-main {
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+          min-width: 0;
+        }
+
+        .client-avatar {
+          width: 44px;
+          height: 44px;
+          border-radius: 10px;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: #ffffff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          font-weight: 700;
+          flex-shrink: 0;
+        }
+
+        .client-info {
+          min-width: 0;
+          flex: 1;
+        }
+
+        .client-title-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+
+        .client-title-row h3 {
+          margin: 0;
+          font-size: 17px;
+          color: #1a1a2e;
+          overflow-wrap: anywhere;
+        }
+
+        .client-status {
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: #eef2ff;
+          color: #667eea;
+          flex-shrink: 0;
+        }
+
+        .client-status.paused {
+          background: #fff3cd;
+          color: #856404;
+        }
+
+        .client-status.archived {
+          background: #f1f3f5;
+          color: #6c757d;
+        }
+
+        .client-meta,
+        .client-contact {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          color: #6c757d;
+          font-size: 13px;
+          overflow-wrap: anywhere;
+        }
+
+        .client-contact {
+          margin-top: 8px;
+        }
+
+        .client-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .filter-tabs {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          background: #ffffff;
+          border-radius: 12px;
+          padding: 8px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+
+        .filter-tabs button {
+          border: none;
+          background: transparent;
+          color: #6c757d;
+          font-size: 14px;
+          font-weight: 700;
+          padding: 9px 14px;
+          border-radius: 8px;
+          cursor: pointer;
+          text-transform: capitalize;
+        }
+
+        .filter-tabs button.active,
+        .filter-tabs button:hover {
+          background: #eef2ff;
+          color: #667eea;
+        }
+
+        .content-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+          gap: 16px;
+        }
+
+        .content-card {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          padding: 18px;
+          background: #ffffff;
+          border: 1px solid #eeeeee;
+          border-radius: 12px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+        }
+
+        .content-card.overdue {
+          border-color: #f5c2c7;
+          background: #fff8f8;
+        }
+
+        .content-card-top {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: flex-start;
+        }
+
+        .content-title-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+
+        .content-title-row h3 {
+          margin: 0;
+          font-size: 17px;
+          color: #1a1a2e;
+          overflow-wrap: anywhere;
+        }
+
+        .content-meta,
+        .content-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          color: #6c757d;
+          font-size: 13px;
+        }
+
+        .content-tags span {
+          background: #f1f3f5;
+          color: #495057;
+          padding: 4px 8px;
+          border-radius: 999px;
+          font-weight: 600;
+        }
+
+        .content-caption {
+          margin: 0;
+          color: #4a4a5a;
+          line-height: 1.5;
+          font-size: 14px;
+          white-space: pre-wrap;
+        }
+
+        .content-badges {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 6px;
+          flex-shrink: 0;
+        }
+
+        .content-platform,
+        .content-status,
+        .approval-status {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: #eef2ff;
+          color: #667eea;
+        }
+
+        .content-platform.youtube {
+          background: #fff1f2;
+          color: #e11d48;
+        }
+
+        .content-platform.both {
+          background: #ecfeff;
+          color: #0891b2;
+        }
+
+        .content-status.published,
+        .approval-status.approved {
+          background: #eafaf1;
+          color: #27ae60;
+        }
+
+        .content-status.scheduled {
+          background: #e8f4fd;
+          color: #3498db;
+        }
+
+        .content-status.archived {
+          background: #f1f3f5;
+          color: #6c757d;
+        }
+
+        .approval-status.needs_client_review,
+        .approval-status.changes_requested {
+          background: #fff3cd;
+          color: #856404;
+        }
+
+        .content-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .client-summary-band {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 18px;
+          padding: 20px 24px;
+          background: #ffffff;
+          border: 1px solid #eeeeee;
+          border-radius: 12px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+
+        .client-summary-band h2 {
+          margin: 0 0 4px;
+          color: #1a1a2e;
+          font-size: 20px;
+        }
+
+        .client-summary-band p {
+          margin: 0;
+          color: #6c757d;
+          font-size: 14px;
+        }
+
+        .client-summary-meta {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 10px;
+          color: #6c757d;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .client-summary-meta span,
+        .client-summary-meta a {
+          background: #f1f3f5;
+          color: #495057;
+          text-decoration: none;
+          padding: 6px 10px;
+          border-radius: 999px;
+        }
+
+        .client-dashboard-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+          gap: 20px;
+        }
+
+        .modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+
+        .modal-header h2 {
+          margin: 0;
+        }
+
+        .modal-form {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .modal-form input,
+        .modal-form textarea,
+        .modal-form select {
+          width: 100%;
+          padding: 12px 14px;
+          border: 2px solid #e0e0e0;
+          border-radius: 10px;
+          font-size: 15px;
+          font-family: 'DM Sans', sans-serif;
+          background: #ffffff;
+        }
+
+        .modal-form input:focus,
+        .modal-form textarea:focus,
+        .modal-form select:focus {
+          outline: none;
+          border-color: #667eea;
         }
 
         /* Leads Quick List */

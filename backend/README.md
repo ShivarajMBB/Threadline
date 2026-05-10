@@ -161,9 +161,14 @@ MONGODB_URI=mongodb://localhost:27017/threadline-crm
 JWT_SECRET=generate-a-random-secret-here
 FACEBOOK_APP_ID=your-facebook-app-id
 FACEBOOK_APP_SECRET=your-facebook-app-secret
+INSTAGRAM_APP_ID=your-instagram-app-id
+INSTAGRAM_APP_SECRET=your-instagram-app-secret
 WEBHOOK_VERIFY_TOKEN=any-random-string
 CLIENT_URL=http://localhost:3000
+ENABLE_BACKGROUND_JOBS=false
 ```
+
+Set `ENABLE_BACKGROUND_JOBS=true` in production when you want Threadline to automatically refresh expiring Instagram tokens once per day and sync connected Instagram media every 6 hours.
 
 ### 3. Generate JWT Secret
 

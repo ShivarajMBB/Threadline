@@ -5,21 +5,34 @@ const ScheduledPost = require('../models/ScheduledPost');
 const InstagramAPI = require('../services/instagramAPI');
 const authMiddleware = require('../middleware/auth');
 
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol);
+  } catch (_error) {
+    return false;
+  }
+}
+
 /**
  * GET /api/scheduler/posts
  */
 router.get('/posts', authMiddleware, async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, clientId } = req.query;
     
     const query = { userId: req.user._id };
     if (status) {
       query.status = status;
     }
+    if (clientId && clientId !== 'all') {
+      query.clientId = clientId === 'unassigned' ? null : clientId;
+    }
     
     const posts = await ScheduledPost.find(query)
       .sort({ scheduledFor: -1 })
-      .populate('referenceSalesPageId');
+      .populate('referenceSalesPageId')
+      .populate('clientId', 'name industry status');
     
     res.json({ posts });
   } catch (error) {
@@ -33,11 +46,23 @@ router.get('/posts', authMiddleware, async (req, res) => {
  */
 router.post('/posts', authMiddleware, async (req, res) => {
   try {
-    const { caption, imageUrl, scheduledFor, trackingKeyword, referenceSalesPageId } = req.body;
+    const { caption, imageUrl, scheduledFor, trackingKeyword, referenceSalesPageId, clientId } = req.body;
     
     if (!caption || !imageUrl || !scheduledFor) {
       return res.status(400).json({ 
         error: 'Caption, image URL, and scheduled time are required' 
+      });
+    }
+
+    if (typeof caption !== 'string' || caption.trim().length > 2200) {
+      return res.status(400).json({
+        error: 'Caption must be under 2200 characters'
+      });
+    }
+
+    if (!isValidHttpUrl(imageUrl)) {
+      return res.status(400).json({
+        error: 'Image URL must be a valid http or https URL'
       });
     }
     
@@ -55,8 +80,9 @@ router.post('/posts', authMiddleware, async (req, res) => {
     
     const post = new ScheduledPost({
       userId: req.user._id,
-      caption,
-      imageUrl,
+      clientId: clientId || null,
+      caption: caption.trim(),
+      imageUrl: imageUrl.trim(),
       scheduledFor: new Date(scheduledFor),
       trackingKeyword,
       referenceSalesPageId,

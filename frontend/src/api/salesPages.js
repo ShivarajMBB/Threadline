@@ -1,8 +1,8 @@
 import api from './config';
 
 export const salesPagesAPI = {
-  async getPages() {
-    const response = await api.get('/sales-pages');
+  async getPages(params = {}) {
+    const response = await api.get('/sales-pages', { params });
     return response.data.salesPages;
   },
 

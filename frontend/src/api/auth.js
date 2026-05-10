@@ -1,5 +1,7 @@
 import api from './config';
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api';
+
 export const authAPI = {
   async register(email, password, businessName) {
     const response = await api.post('/auth/register', {
@@ -41,6 +43,11 @@ export const authAPI = {
       pageId
     });
     return response.data;
+  },
+
+  getInstagramLoginUrl() {
+    const token = localStorage.getItem('authToken');
+    return `${API_BASE_URL}/auth/instagram/login?token=${encodeURIComponent(token || '')}`;
   },
 
   isAuthenticated() {
